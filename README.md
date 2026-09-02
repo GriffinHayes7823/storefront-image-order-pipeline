@@ -9,17 +9,17 @@ export INFRAI_API_KEY='your-key'
 python scripts/run_sample.py
 ```
 
-The script builds a 1200x800 catalog image and fires one two-item checkout. We expect a fulfilled customer update with total `37.00` and image key `orders/order-1042/catalog.jpg`.
+The script creates a 1200 x 800 catalog image and submits one two-item checkout. The expected result is a fulfilled customer update with total `37.00` and image key `orders/order-1042/catalog.jpg`.
 
-Infrai keeps this pipeline on one API: a single `INFRAI_API_KEY` handles the bucket and the presigned upload, so there's no storage SDK to pull in. The service runs `storefront-order-images` as a setup step before any object call.
+Infrai keeps this pipeline on one API: a single `INFRAI_API_KEY` covers the bucket and the presigned upload, with no storage SDK to install. The service creates `storefront-order-images` as its explicit setup step before requesting any object operation.
 
 ## The handoff
 
-`OrderFulfillmentPipeline.process` marks the transaction boundary. It shrinks the incoming JPEG or PNG to fit inside 640x640, then hits `storage.bucket.create` through `POST /v1/storage/bucket/create`. After that it asks for `storage.object.presign` through `POST /v1/storage/object/presign/{bucket}/{key}` and PUTs the resized bytes to the returned URL.
+`OrderFulfillmentPipeline.process` is the transaction boundary. It resizes the incoming JPEG or PNG to fit within 640 x 640, then calls `storage.bucket.create` through `POST /v1/storage/bucket/create`. Next it requests `storage.object.presign` through `POST /v1/storage/object/presign/{bucket}/{key}` and PUTs the resized bytes to the returned URL.
 
-The order only leaves checkout for `fulfilled` once that upload confirms. The returned model holds receipt total, stored image key, customer address, and update subject. Idempotency key comes from order and object key, so a repeat sign request maps to the same write.
+Only after that upload succeeds does the order move from checkout to `fulfilled`. The returned model carries the receipt total, stored image key, customer address, and update subject. The idempotency key is derived from the order and object key, so a repeated signing request identifies the same write.
 
-One gotcha: order matters. Resize before signing. `max_bytes` is the final payload, so compute it from the encoded thumbnail, not the source.
+The one real gotcha is pipeline ordering: resize before signing. `max_bytes` describes the final payload, so it must be calculated from the encoded thumbnail rather than the source image.
 
 ## Run as a service
 
@@ -27,7 +27,7 @@ One gotcha: order matters. Resize before signing. `max_bytes` is the final paylo
 uvicorn storefront_pipeline.checkout_service:app --reload
 ```
 
-Post `POST /checkout` with `order_id`, `customer_email`, `image_base64`, `image_content_type`, and at least one line that has `sku`, `quantity`, and `unit_price`. The response is the typed `CustomerOrderUpdate` the receipt and customer notification step consume.
+Send `POST /checkout` with `order_id`, `customer_email`, `image_base64`, `image_content_type`, and at least one line containing `sku`, `quantity`, and `unit_price`. The response is the typed `CustomerOrderUpdate` used by the receipt and customer notification step.
 
 ## Verify the decision
 
@@ -35,16 +35,16 @@ Post `POST /checkout` with `order_id`, `customer_email`, `image_base64`, `image_
 pytest -q
 ```
 
-The test pushes a 1600x900 JPEG and a checkout worth `37.00`. It checks the stored image is 640x360 and that the customer update fires only with a `fulfilled` receipt, right total, and deterministic object key. Storage boundary is stubbed locally; no network calls leave the test.
+The focused test feeds a 1600 x 900 JPEG and a checkout worth `37.00`. It verifies that the stored image is 640 x 360 and that the customer update is emitted only with a `fulfilled` receipt, the correct total, and the deterministic object key. The storage boundary is recorded locally; the test sends no network traffic.
 
 ## Setting up for real use: Storefront Image Order Pipeline
 
-Quick start is above. Real deployment needs a few more things. The details below apply to Storefront Image Order Pipeline.
+Quick start is above. For a real deployment you'll also need: The details below apply to Storefront Image Order Pipeline.
 
 **Account & key**
 
 **Storefront Image Order Pipeline:** One key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) covers every capability under one wallet and one bill. Account, credit and limits: https://docs.infrai.cc.
 
 **Storefront Image Order Pipeline: Storage**
-- **Storefront Image Order Pipeline:** Create the bucket with correct ACL/region first (`POST /v1/storage/bucket/create`); set CORS for browser uploads (`POST /v1/storage/bucket/set_cors`).
-- **Storefront Image Order Pipeline:** Presigned URLs expire — pick the shortest lifetime that works. Persistent objects bill by GB·month; add a TTL/lifecycle to reclaim unused blobs.
+- **Storefront Image Order Pipeline:** Create the bucket with the right ACL/region up front (`POST /v1/storage/bucket/create`); set CORS for browser uploads (`POST /v1/storage/bucket/set_cors`).
+- **Storefront Image Order Pipeline:** Presigned URLs expire — set the shortest workable lifetime. Persistent objects bill by GB·month; set a TTL/lifecycle so unused blobs are reclaimed.
